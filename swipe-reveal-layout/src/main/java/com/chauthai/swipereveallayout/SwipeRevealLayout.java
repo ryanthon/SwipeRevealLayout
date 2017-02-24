@@ -34,12 +34,11 @@ import android.support.v4.view.ViewCompat;
 import android.support.v4.widget.ViewDragHelper;
 import android.util.AttributeSet;
 import android.util.DisplayMetrics;
-import android.util.Log;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
-import android.widget.LinearLayout;
+import android.view.ViewParent;
 
 @SuppressLint("RtlHardcoded")
 public class SwipeRevealLayout extends ViewGroup {
@@ -52,6 +51,8 @@ public class SwipeRevealLayout extends ViewGroup {
 
     private static final int DEFAULT_MIN_FLING_VELOCITY = 300; // dp per second
     private static final int DEFAULT_MIN_DIST_REQUEST_DISALLOW_PARENT = 1; // dp
+    private static final float DEFAULT_SENSITIVITY = 1.0f;
+    private static final int DEFAULT_DRAG_OFFSET = 10; // dp
 
     public static final int DRAG_EDGE_LEFT =   0x1;
     public static final int DRAG_EDGE_RIGHT =  0x1 << 1;
@@ -112,9 +113,12 @@ public class SwipeRevealLayout extends ViewGroup {
     private int mMinFlingVelocity = DEFAULT_MIN_FLING_VELOCITY;
     private int mState = STATE_CLOSE;
     private int mMode = MODE_NORMAL;
+    private float mSensitivity = DEFAULT_SENSITIVITY;
 
     private int mLastMainLeft = 0;
     private int mLastMainTop  = 0;
+
+    private int mDragDistance = 0;
 
     private int mDragEdge = DRAG_EDGE_LEFT;
 
@@ -180,23 +184,171 @@ public class SwipeRevealLayout extends ViewGroup {
         super(context, attrs, defStyleAttr);
     }
 
-    @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        mGestureDetector.onTouchEvent(event);
-        mDragHelper.processTouchEvent(event);
-        return true;
+    // Swipe offset based on com.daimajia.swipe.SwipeLayout
+    // See https://github.com/daimajia/AndroidSwipeLayout
+    private float sX = -1, sY = -1;
+    private boolean mIsBeingDragged;
+
+    private final int STATUS_CLOSE = 0;
+    private final int STATUS_OPEN = 1;
+    private final int STATUS_MIDDLE = 2;
+
+    private int getOpenStatus() {
+        if (mSecondaryView == null) {
+            return STATUS_CLOSE;
+        }
+
+        int left = mMainView.getLeft();
+        int top = mMainView.getTop();
+        if (left == mRectMainClose.left && top == mRectMainClose.top) {
+            return STATUS_CLOSE;
+        }
+
+        if (left == mRectMainOpen.left || top == mRectMainOpen.top) {
+            return STATUS_OPEN;
+        }
+
+        return STATUS_MIDDLE;
+    }
+
+    private void checkCanDrag(MotionEvent event) {
+        if (mIsBeingDragged) return;
+        int status = getOpenStatus();
+        if (status == STATUS_MIDDLE) {
+            mIsBeingDragged = true;
+            return;
+        }
+
+        float distanceX = event.getRawX() - sX;
+        float distanceY = event.getRawY() - sY;
+        float angle = (float) Math.toDegrees(Math.atan(Math.abs(distanceY / distanceX)));
+
+        boolean doNothing = false;
+        if (mDragEdge == DRAG_EDGE_RIGHT) {
+            boolean suitable = (status == STATUS_OPEN && distanceX > mDragDistance)
+                    || (status == STATUS_CLOSE && distanceX < -mDragDistance);
+            if (angle > 30 || !suitable) {
+                doNothing = true;
+            }
+        }
+
+        if (mDragEdge == DRAG_EDGE_LEFT) {
+            boolean suitable = (status == STATUS_OPEN && distanceX < -mDragDistance)
+                    || (status == STATUS_CLOSE && distanceX > mDragDistance);
+            if (angle > 30 || !suitable) {
+                doNothing = true;
+            }
+        }
+
+        if (mDragEdge == DRAG_EDGE_TOP) {
+            boolean suitable = (status == STATUS_OPEN && distanceY < -mDragDistance)
+                    || (status == STATUS_CLOSE && distanceY > mDragDistance);
+            if (angle < 60 || !suitable) {
+                doNothing = true;
+            }
+        }
+
+        if (mDragEdge == DRAG_EDGE_BOTTOM) {
+            boolean suitable = (status == STATUS_OPEN && distanceY > mDragDistance)
+                    || (status == STATUS_CLOSE && distanceY < -mDragDistance);
+            if (angle < 60 || !suitable) {
+                doNothing = true;
+            }
+        }
+
+        mIsBeingDragged = !doNothing;
     }
 
     @Override
-    public boolean onInterceptTouchEvent(MotionEvent ev) {
-        mDragHelper.processTouchEvent(ev);
-        mGestureDetector.onTouchEvent(ev);
+    public boolean onTouchEvent(MotionEvent event) {
+        mGestureDetector.onTouchEvent(event);
+
+        int action = event.getActionMasked();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN: {
+                mDragHelper.processTouchEvent(event);
+                sX = event.getRawX();
+                sY = event.getRawY();
+            }
+
+            case MotionEvent.ACTION_MOVE: {
+                checkCanDrag(event);
+                if (mIsBeingDragged) {
+                    ViewParent parent = getParent();
+                    if(parent != null) {
+                        parent.requestDisallowInterceptTouchEvent(true);
+                    }
+                    mDragHelper.processTouchEvent(event);
+                }
+                break;
+            }
+
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                mIsBeingDragged = false;
+                mDragHelper.processTouchEvent(event);
+                break;
+            }
+
+            default:
+                mDragHelper.processTouchEvent(event);
+        }
+
+        return super.onTouchEvent(event) || mIsBeingDragged || action == MotionEvent.ACTION_DOWN;
+    }
+
+    @Override
+    public boolean onInterceptTouchEvent(MotionEvent event) {
+        mGestureDetector.onTouchEvent(event);
+
+        int action = event.getAction();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN: {
+                mDragHelper.processTouchEvent(event);
+                mIsBeingDragged = false;
+                sX = event.getRawX();
+                sY = event.getRawY();
+
+                if (getOpenStatus() == STATUS_MIDDLE) {
+                    mIsBeingDragged = true;
+                }
+
+                break;
+            }
+
+            case MotionEvent.ACTION_MOVE: {
+                boolean beforeCheck = mIsBeingDragged;
+                checkCanDrag(event);
+                if (mIsBeingDragged) {
+                    ViewParent parent = getParent();
+                    if(parent != null) {
+                        parent.requestDisallowInterceptTouchEvent(true);
+                    }
+                    //mDragHelper.processTouchEvent(event);
+                }
+                if(!beforeCheck && mIsBeingDragged) {
+                    return false;
+                }
+                break;
+            }
+
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL: {
+                mIsBeingDragged = false;
+                mDragHelper.processTouchEvent(event);
+                break;
+            }
+
+            default:
+                mDragHelper.processTouchEvent(event);
+
+        }
 
         boolean settling = mDragHelper.getViewDragState() == ViewDragHelper.STATE_SETTLING;
         boolean idleAfterScrolled = mDragHelper.getViewDragState() == ViewDragHelper.STATE_IDLE
                 && mIsScrolling;
 
-        return settling || idleAfterScrolled;
+        return mIsBeingDragged || settling || idleAfterScrolled;
     }
 
     @Override
@@ -338,22 +490,11 @@ public class SwipeRevealLayout extends ViewGroup {
         final int widthMode = MeasureSpec.getMode(widthMeasureSpec);
         final int heightMode = MeasureSpec.getMode(heightMeasureSpec);
 
-        int desiredWidth = 0;
-        int desiredHeight = 0;
-
-        // first find the largest child
-        for (int i = 0; i < getChildCount(); i++) {
-            final View child = getChildAt(i);
-            measureChild(child, widthMeasureSpec, heightMeasureSpec);
-            desiredWidth = Math.max(child.getMeasuredWidth(), desiredWidth);
-            desiredHeight = Math.max(child.getMeasuredHeight(), desiredHeight);
-        }
-        // create new measure spec using the largest child width
-        widthMeasureSpec = MeasureSpec.makeMeasureSpec(desiredWidth, widthMode);
-        heightMeasureSpec = MeasureSpec.makeMeasureSpec(desiredHeight, heightMode);
-
         final int measuredWidth = MeasureSpec.getSize(widthMeasureSpec);
         final int measuredHeight = MeasureSpec.getSize(heightMeasureSpec);
+
+        int desiredWidth = 0;
+        int desiredHeight = 0;
 
         for (int i = 0; i < getChildCount(); i++) {
             final View child = getChildAt(i);
@@ -587,7 +728,6 @@ public class SwipeRevealLayout extends ViewGroup {
         return mOnLayoutCount < 2;
     }
 
-
     private int getMainOpenLeft() {
         switch (mDragEdge) {
             case DRAG_EDGE_LEFT:
@@ -695,14 +835,15 @@ public class SwipeRevealLayout extends ViewGroup {
             mDragEdge = a.getInteger(R.styleable.SwipeRevealLayout_dragEdge, DRAG_EDGE_LEFT);
             mMinFlingVelocity = a.getInteger(R.styleable.SwipeRevealLayout_flingVelocity, DEFAULT_MIN_FLING_VELOCITY);
             mMode = a.getInteger(R.styleable.SwipeRevealLayout_mode, MODE_NORMAL);
-
+            mSensitivity = a.getFloat(R.styleable.SwipeRevealLayout_sensitivity, DEFAULT_SENSITIVITY);
+            mDragDistance = a.getDimensionPixelSize(R.styleable.SwipeRevealLayout_swipeOffset, DEFAULT_DRAG_OFFSET);
             mMinDistRequestDisallowParent = a.getDimensionPixelSize(
                     R.styleable.SwipeRevealLayout_minDistRequestDisallowParent,
                     dpToPx(DEFAULT_MIN_DIST_REQUEST_DISALLOW_PARENT)
             );
         }
 
-        mDragHelper = ViewDragHelper.create(this, 1.0f, mDragHelperCallback);
+        mDragHelper = ViewDragHelper.create(this, mSensitivity, mDragHelperCallback);
         mDragHelper.setEdgeTrackingEnabled(ViewDragHelper.EDGE_ALL);
 
         mGestureDetector = new GestureDetectorCompat(context, mGestureListener);
@@ -1032,6 +1173,16 @@ public class SwipeRevealLayout extends ViewGroup {
             if (mDragStateChangeListener != null && !mAborted && prevState != mState) {
                 mDragStateChangeListener.onDragStateChanged(mState);
             }
+        }
+
+        @Override
+        public int getViewHorizontalDragRange(View child) {
+            return mDragDistance;
+        }
+
+        @Override
+        public int getViewVerticalDragRange(View child) {
+            return mDragDistance;
         }
     };
 

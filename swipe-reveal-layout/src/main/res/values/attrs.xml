@@ -17,5 +17,7 @@
         <attr name="flingVelocity" format="integer" />
 
         <attr name="minDistRequestDisallowParent" format="dimension" />
+        <attr name="sensitivity" format="float" />
+        <attr name="swipeOffset" format="dimension" />
     </declare-styleable>
 </resources>
