@@ -546,8 +546,7 @@ public class SwipeRevealLayout extends ViewGroup {
         }
 
         // sometimes children don't match parent height
-        if (mSecondaryView != null && getLayoutParams().height == LayoutParams.MATCH_PARENT &&
-                mSecondaryView.getLayoutParams().height == LayoutParams.MATCH_PARENT) {
+        if (mSecondaryView != null && mSecondaryView.getLayoutParams().height == LayoutParams.MATCH_PARENT) {
             int widthSpec = MeasureSpec.makeMeasureSpec(mSecondaryView.getMeasuredWidth(), MeasureSpec.EXACTLY);
             int heightSpec = MeasureSpec.makeMeasureSpec(desiredHeight, MeasureSpec.EXACTLY);
             measureChild(mSecondaryView, widthSpec, heightSpec);
